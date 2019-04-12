@@ -1,6 +1,6 @@
 {
   "name": "@kemsu/react-webapp-template",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "React web-application template using rollup to build",
   "scripts": {
     "start": "node server --port 8080 --public dist/public",

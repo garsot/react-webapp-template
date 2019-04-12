@@ -76,13 +76,13 @@ const srcConfig = {
         if (isNodeModule && !~externals.indexOf(id)) externals.push(id)
         return isNodeModule
     },
-    plugins: [
+    plugins: [        
         copy({
             targets: {
                 'src/assets': 'dist/public/assets',
-                [`node_modules/@babel/polyfill/dist/polyfill${!dev ? '.min' : ''}.js`]: "dist/public/polyfill.js",
-                [`node_modules/systemjs/dist/system${!dev ? '.min' : ''}.js`]: 'dist/public/system.js',
-                [`node_modules/systemjs/dist/extras/named-register${!dev ? '.min' : ''}.js`]: 'dist/public/system.named-register.js'
+                [`node_modules/@babel/polyfill/dist/polyfill${!dev ? '.min' : ''}.js`]: "dist/public/vendors/polyfill.js",
+                [`node_modules/systemjs/dist/system${!dev ? '.min' : ''}.js`]: 'dist/public/vendors/system.js',
+                [`node_modules/systemjs/dist/extras/named-register${!dev ? '.min' : ''}.js`]: 'dist/public/vendors/system.named-register.js'
             }
         }),
         postcss({ modules: true }),
@@ -126,7 +126,7 @@ function generateDLConfig(dlModuleId, dlModuleSrcPath) {
         external(id) {
             return !id.startsWith('.') && !id.startsWith(path.resolve(__dirname, "..")) && !~locDeps.indexOf(id)
         },
-        plugins: [
+        plugins: [            
             postcss({ modules: true }),
             babel({
                 exclude: 'node_modules/**',
@@ -169,7 +169,7 @@ function generateVendorConfig(vendor, outExternals) {
     }
 }
 
-// Buil src, vendors and dynamically modules
+// Build src, vendors and dynamically modules
 async function build() {
 
     if (watch) {
@@ -205,14 +205,17 @@ async function build() {
         })
 
     } else {
+        console.log("\x1b[32m", 'building bundles', "\x1b[0m")
         const bundle = await rollup.rollup(srcConfig)
         await bundle.write(srcConfig.output)
-        await bundleVendors()
+        console.log("\x1b[32m",'finished building bundles', "\x1b[0m")
 
         await Promise.all(dlConfigs.map(async (dlConfig) => {
             const bundle = await rollup.rollup(dlConfig)
             await bundle.write(dlConfig.output)
         }))
+
+        await bundleVendors()
     }
 }
 
@@ -242,7 +245,7 @@ async function bundleVendors() {
 
     console.log("\x1b[32m", 'building vendors', "\x1b[0m")
     await recGen(externals)
-    fs.writeFileSync(path.resolve(__dirname, '../dist/public/vendors.js'), resultCode)
+    fs.writeFileSync(path.resolve(__dirname, '../dist/public/vendors/common-modules.js'), resultCode)
     console.log("\x1b[32m", 'finished building vendors', "\x1b[0m")
 }
 
