@@ -33,14 +33,27 @@ const namedExports = {
  * @param {String} pattern - `glob` pattern relative `src` folder
  */
 function getDynamicallyLoadedModules(pattern) {
+
+    if (pattern instanceof Array) {
+
+        let result = {}
+
+        for (let pat of pattern) {
+            result = Object.assign({}, result, getDynamicallyLoadedModules(pat))
+        }
+
+        return result
+    }
+
     return Object.assign({}, ...glob.sync("src/" + pattern, { root: path.resolve(__dirname, '..') }).map(p => ({ [p.slice(4, -3)]: p })))
 }
 
 
 // Generate configs for dynamically modules from src
-const dlConfigs = pkg.dlModuleGlobPattern ? Object.entries(getDynamicallyLoadedModules(pkg.dlModuleGlobPattern)).map(([dlModuleId, dlModuleSrcPath]) => {
-    return generateDLConfig(dlModuleId, dlModuleSrcPath)
-}) : []
+const dlConfigs = pkg.rollup && pkg.rollup.dlModuleGlobPattern ?
+    Object.entries(getDynamicallyLoadedModules(pkg.rollup.dlModuleGlobPattern)).map(([dlModuleId, dlModuleSrcPath]) => {
+        return generateDLConfig(dlModuleId, dlModuleSrcPath)
+    }) : []
 
 
 // Config for src without dynamically modules
@@ -82,7 +95,7 @@ const srcConfig = {
             'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production')
         }),
         commonjs({ namedExports }),
-        process.env.NODE_ENV === 'production' && require('rollup-plugin-terser').terser()
+        !dev && require('rollup-plugin-terser').terser()
 
     ]
 }
@@ -124,7 +137,7 @@ function generateDLConfig(dlModuleId, dlModuleSrcPath) {
                 'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production')
             }),
             commonjs({ namedExports }),
-            process.env.NODE_ENV === 'production' && require('rollup-plugin-terser').terser()
+            !dev && require('rollup-plugin-terser').terser()
 
         ]
     }
