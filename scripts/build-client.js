@@ -24,7 +24,7 @@ const namedExports = {
 }
 
 /**
- * Сonverts input array to object format
+ * Converts input array to object format
  */
 function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
@@ -123,7 +123,7 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
     const cwd = __dirname + '/../'
 
-    // clean dist folder
+    // Clean dist folder
 
     console.log("\x1b[32m", 'clean dist folder', "\x1b[0m")
 
@@ -133,7 +133,7 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
     console.log("\x1b[32m", 'copy static files', "\x1b[0m")
 
-    // recursive create vendors folder
+    // Recursive create vendors folder
     fs.mkdirSync(cwd + 'dist/public/vendors', { recursive: true })
 
     const staticFiles = [
@@ -155,7 +155,16 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
     // Add module name to `System.register` function and replace `./chunk.js` with `chunk`
     for (let chunk of output) {
-        const code = chunk.code.replace(/^System\.register\(/, `System.register('${chunk.name}',`).replace('./chunk.js', 'chunk')
+
+        const chunkName = chunk.facadeModuleId ?
+            /node_modules[/\\]((?:@[^/\\]+[/\\])?[^/\\]+)/.exec(chunk.facadeModuleId)[1].replace('\\', '/')
+            :
+            chunk.fileName.slice(0, -3)
+
+        const code = chunk.code
+            .replace(/^System\.register\(/, `System.register('${chunkName}',`)
+            .replace(/(\.\.?\/)*chunk(\d*)\.js/g, 'chunk$2')
+
         bundleCode = bundleCode.concat(code)
     }
 
@@ -171,7 +180,7 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
         const srcWatcher = rollup.watch(srcConfig)
 
-        const question = () => rl.question("\x1b[33mEnter 'r' to restart or 'e' to stop:\x1b[0m ", value => {
+        const question = () => rl.question("\x1b[33mEnter 'r' to restart:\x1b[0m ", value => {
             if (value === 'r') {
                 srcWatcher.close()
                 console.log('Full restart build')
