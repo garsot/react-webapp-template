@@ -1,253 +1,183 @@
-const path = require('path')
-const fs = require('fs')
-const glob = require('glob')
+const { dev = true, watch = false } = require('minimist')(process.argv.slice(2))
 const rollup = require('rollup')
-
-const { dev, watch } = require('minimist')(process.argv.slice(2))
+const fs = require('fs')
+var rimraf = require("rimraf")
 
 const babel = require('rollup-plugin-babel')
 const commonjs = require('rollup-plugin-commonjs')
 const resolve = require('rollup-plugin-node-resolve')
 const replace = require('rollup-plugin-replace')
-const copy = require('rollup-plugin-copy')
 const postcss = require('rollup-plugin-postcss')
+const { terser } = require('rollup-plugin-terser')
 
-const pkg = require('../package.json')
+const rl = require('readline').createInterface({
+    input: process.stdin,
+    output: process.stdout
+})
 
-let externals = Object.keys(pkg.dependencies)
+const glob = require('glob')
 
+/**
+ * Named exports for some CommonJS modules
+ */
 const namedExports = {
-    'react': [
-        'createContext', 'useContext', 'useRef', 'useState', 'Suspense',
-        'useEffect', 'useMemo', 'cloneElement', 'createElement', 'lazy',
-        'Component', 'createFactory', 'isValidElement', 'useCallback',
-        'useDebugValue', 'memo', 'useImperativeHandle', 'useLayoutEffect',
-        'useReducer', 'PureComponent', 'Fragment', 'Children', 'forwardRef'
-    ],
-    'react-dom': [
-        'createPortal', 'findDOMNode', 'render'
-    ]
+    'react': Object.getOwnPropertyNames(require('react')),
+    'react-dom': Object.getOwnPropertyNames(require('react-dom'))
 }
 
 /**
- * @param {String} pattern - `glob` pattern relative `src` folder
+ * Сonverts input array to object format
  */
-function getDynamicallyLoadedModules(pattern) {
+function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
-    if (pattern instanceof Array) {
+    const globOptions = { cwd: __dirname + '/../src' }
 
-        let result = {}
+    for (let inputArrayItem of inputArray) {       
 
-        for (let pat of pattern) {
-            result = Object.assign({}, result, getDynamicallyLoadedModules(pat))
+        if (!inputArrayItem.endsWith('.js')) throw new Error(`Invalid input '${inputArrayItem}'! The input must end with '.js'`)
+
+        // If input is glob pattern
+        if (inputArrayItem.includes('*')) {
+            mapSrcInputArrayToObject(glob.sync(inputArrayItem, globOptions), inputObject)
+        } else {
+            inputObject[inputArrayItem.slice(0, -3)] = 'src/' + inputArrayItem
         }
 
-        return result
     }
-
-    return Object.assign({}, ...glob.sync("src/" + pattern, { root: path.resolve(__dirname, '..') }).map(p => ({ [p.slice(4, -3)]: p })))
+    return inputObject
 }
 
+/**
+ * Build
+ */
+(async function build() {
 
-// Generate configs for dynamically modules from src
-const dlConfigs = pkg.rollup && pkg.rollup.dlModuleGlobPattern ?
-    Object.entries(getDynamicallyLoadedModules(pkg.rollup.dlModuleGlobPattern)).map(([dlModuleId, dlModuleSrcPath]) => {
-        return generateDLConfig(dlModuleId, dlModuleSrcPath)
-    }) : []
+    const pkg = JSON.parse(fs.readFileSync(__dirname + '/../package.json'))
 
+    /**
+     *  External modules equal `dependencies` minus `serverDependencies` (= require(package.json) 
+     */
+    const external = Object.keys(pkg.dependencies).filter(dep => !~pkg.serverDependencies.indexOf(dep))
 
-// Config for src without dynamically modules
-const srcConfig = {
-    input: 'src/index.js',
-    output: {
-        entryFileNames: "[name].js",
-        dir: 'dist/public',
-        format: 'system',
-        sourcemap: true,
-        exports: 'named'
-    },
-    watch: {
-        chokidar: true,
-        include: 'src/**'
-    },
-    external(id) {
-        if (/style-inject/.test(id)) return false
-        const isNodeModule = !(id.startsWith('src/') || id.startsWith(path.resolve(__dirname, '../src')) || id.startsWith('./'))
-        if (isNodeModule && !~externals.indexOf(id)) externals.push(id)
-        return isNodeModule
-    },
-    plugins: [        
-        copy({
-            targets: {
-                'src/assets': 'dist/public/assets',
-                [`node_modules/@babel/polyfill/dist/polyfill${!dev ? '.min' : ''}.js`]: "dist/public/vendors/polyfill.js",
-                [`node_modules/systemjs/dist/system${!dev ? '.min' : ''}.js`]: 'dist/public/vendors/system.js',
-                [`node_modules/systemjs/dist/extras/named-register${!dev ? '.min' : ''}.js`]: 'dist/public/vendors/system.named-register.js'
-            }
-        }),
-        postcss({ modules: true }),
-        babel({
-            exclude: 'node_modules/**',
-            ...pkg.babelOptions
-        }),
-        resolve(),
-        replace({
-            'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production')
-        }),
-        commonjs({ namedExports }),
-        !dev && require('rollup-plugin-terser').terser()
-
-    ]
-}
-
-// Generate config for dynamically module from src
-function generateDLConfig(dlModuleId, dlModuleSrcPath) {
-
-    let locDeps = []
-
-    try {
-        const locPkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", dlModuleSrcPath, '../package.json')))
-        locDeps = Object.keys(locPkg.dependencies)
-    } catch{ }
-
-    return {
-        input: { [dlModuleId]: dlModuleSrcPath },
+    // Source modules config
+    const srcConfig = {
+        input: mapSrcInputArrayToObject(pkg.rollupInputs),
         output: {
-            entryFileNames: "[name].js",
             dir: 'dist/public',
             format: 'system',
-            sourcemap: true,
-            exports: 'named'
+            sourcemap: true
         },
-        watch: {
-            chokidar: true,
-            include: 'src/**'
-        },
-        external(id) {
-            return !id.startsWith('.') && !id.startsWith(path.resolve(__dirname, "..")) && !~locDeps.indexOf(id)
-        },
-        plugins: [            
-            postcss({ modules: true }),
+        external,
+        plugins: [
             babel({
                 exclude: 'node_modules/**',
                 ...pkg.babelOptions
             }),
-            resolve(),
+            postcss({ modules: true }),
             replace({
                 'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production')
             }),
+            resolve(),
             commonjs({ namedExports }),
-            !dev && require('rollup-plugin-terser').terser()
-
-        ]
+            !dev && terser()
+        ],
+        watch: {
+            chokidar: true
+        },
     }
-}
 
-// Generate config for vendor modules which will become external modules
-function generateVendorConfig(vendor, outExternals) {
-    return {
-        input: require.resolve(vendor),
+    // External modules config
+    const extConfig = {
+        input: external,
         output: {
-            name: vendor,
+            dir: 'dist/public/common-modules',
+            chunkFileNames: '[name].js',
             format: 'system',
             sourcemap: false,
             exports: 'named'
         },
-        external(id) {
-            if (id === vendor || id.startsWith('./') || id.startsWith(path.resolve(__dirname, '../node_modules'))) return false
-            if (!~outExternals.indexOf(id)) outExternals.push(id)
-            return true
-        },
+        external,
         plugins: [
             replace({
                 'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production')
             }),
             resolve(),
             commonjs({ namedExports }),
-            !dev && require('rollup-plugin-terser').terser()
+            !dev && terser()
         ]
+    };
+
+    const cwd = __dirname + '/../'
+
+    // clean dist folder
+
+    console.log("\x1b[32m", 'clean dist folder', "\x1b[0m")
+
+    rimraf.sync(cwd + 'dist')
+
+    // Copy static files  
+
+    console.log("\x1b[32m", 'copy static files', "\x1b[0m")
+
+    // recursive create vendors folder
+    fs.mkdirSync(cwd + 'dist/public/vendors', { recursive: true })
+
+    const staticFiles = [
+        ['src/index.html', 'dist/public/index.html'],
+        [`node_modules/@babel/polyfill/dist/polyfill${!dev ? '.min' : ''}.js`, "dist/public/vendors/polyfill.js"],
+        [`node_modules/systemjs/dist/system${!dev ? '.min' : ''}.js`, 'dist/public/vendors/system.js'],
+        [`node_modules/systemjs/dist/extras/named-register${!dev ? '.min' : ''}.js`, 'dist/public/vendors/system.named-register.js']
+    ]
+
+    staticFiles.forEach(([src, dst]) => fs.copyFileSync(cwd + src, cwd + dst))
+
+    // Bundle common modules
+    console.log("\x1b[32m", 'bundle common modules', "\x1b[0m")
+
+    const extBundle = await rollup.rollup(extConfig)
+    const { output } = await extBundle.generate(extConfig.output)
+
+    let bundleCode = ''
+
+    // Add module name to `System.register` function and replace `./chunk.js` with `chunk`
+    for (let chunk of output) {
+        const code = chunk.code.replace(/^System\.register\(/, `System.register('${chunk.name}',`).replace('./chunk.js', 'chunk')
+        bundleCode = bundleCode.concat(code)
     }
-}
 
-// Build src, vendors and dynamically modules
-async function build() {
+    fs.writeFileSync(cwd + 'dist/public/vendors/common-modules.js', bundleCode)
 
+    // Bundle source modules
     if (watch) {
+        const srcWatcher = rollup.watch(srcConfig)
 
-        const watcher = rollup.watch([srcConfig, ...dlConfigs])
-        let bundleVendorsComplete = false
-
-        watcher.on('event', e => {
-            if (e.code === 'START') {
-
-                console.log('the watcher is (re)starting')
-
-            } else if (e.code === 'BUNDLE_START') {
-
-                console.log("\x1b[32m", 'building an individual bundle', "\x1b[0m")
-
-            } else if (e.code === 'BUNDLE_END') {
-
-                console.log("\x1b[32m", 'finished building a bundle', "\x1b[0m")
-
-                if (!bundleVendorsComplete) bundleVendors()
-
-                bundleVendorsComplete = true
-            } else if (e.code === 'END') {
-
-                console.log('finished building all bundles')
-
-            } else if (e.code === 'ERROR' || e.code === 'FATAL') {
-
-                console.error(e.error.stack)
-
+        const question = () => rl.question("\x1b[33mEnter 'r' to restart:\x1b[0m ", value => {
+            if (value === 'r') {
+                srcWatcher.close()
+                console.log('Full restart build')
+                build()
+            } else {
+                question()
             }
         })
 
+        srcWatcher.on('event', ({ code, error }) => {
+            switch (code) {
+                case 'START': console.log('the watcher is (re)starting'); break
+                case 'BUNDLE_START': console.log("\x1b[32m", 'bundle source modules', "\x1b[0m"); break
+                case 'BUNDLE_END': console.log("\x1b[32m", 'finished bundle source modules', "\x1b[0m"); break
+                case 'END': question(); break
+                case 'ERROR':
+                case 'FATAL': console.error(error.stack); break
+            }
+        })
     } else {
-        console.log("\x1b[32m", 'building bundles', "\x1b[0m")
-        const bundle = await rollup.rollup(srcConfig)
-        await bundle.write(srcConfig.output)
-        console.log("\x1b[32m",'finished building bundles', "\x1b[0m")
+        console.log("\x1b[32m", 'bundle source modules', "\x1b[0m")
 
-        await Promise.all(dlConfigs.map(async (dlConfig) => {
-            const bundle = await rollup.rollup(dlConfig)
-            await bundle.write(dlConfig.output)
-        }))
+        const srcBundle = await rollup.rollup(srcConfig)
+        await srcBundle.write(srcConfig.output)
 
-        await bundleVendors()
-    }
-}
-
-// Bundle vendors
-async function bundleVendors() {
-
-    let resultCode = ''
-    let generated = []
-
-    async function recGen(externals) {
-
-        for (let external of externals) {
-
-            if (~generated.indexOf(external)) continue
-
-            let vendorExt = []
-            let vendorConfig = generateVendorConfig(external, vendorExt)
-            const bundle = await rollup.rollup(vendorConfig)
-            const { output } = await bundle.generate(vendorConfig.output)
-            resultCode = resultCode.concat(output[0].code)
-
-            generated.push(external)
-
-            await recGen(vendorExt)
-        }
+        console.log("\x1b[32m", 'finished bundle source modules', "\x1b[0m")
     }
 
-    console.log("\x1b[32m", 'building vendors', "\x1b[0m")
-    await recGen(externals)
-    fs.writeFileSync(path.resolve(__dirname, '../dist/public/vendors/common-modules.js'), resultCode)
-    console.log("\x1b[32m", 'finished building vendors', "\x1b[0m")
-}
-
-// Start build
-build()
+})()

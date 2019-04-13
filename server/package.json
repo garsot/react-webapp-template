@@ -1,6 +1,0 @@
-{ 
-  "dependencies": {
-    "express": "^4.16.4",
-    "minimist": "^1.2.0"
-  }
-}
