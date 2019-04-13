@@ -1,6 +1,7 @@
 const { dev = true, watch = false } = require('minimist')(process.argv.slice(2))
 const rollup = require('rollup')
 const fs = require('fs')
+const path = require('path')
 var rimraf = require("rimraf")
 
 const babel = require('rollup-plugin-babel')
@@ -10,10 +11,7 @@ const replace = require('rollup-plugin-replace')
 const postcss = require('rollup-plugin-postcss')
 const { terser } = require('rollup-plugin-terser')
 
-const rl = require('readline').createInterface({
-    input: process.stdin,
-    output: process.stdout
-})
+const readline = require('readline')
 
 const glob = require('glob')
 
@@ -32,7 +30,7 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
     const globOptions = { cwd: __dirname + '/../src' }
 
-    for (let inputArrayItem of inputArray) {       
+    for (let inputArrayItem of inputArray) {
 
         if (!inputArrayItem.endsWith('.js')) throw new Error(`Invalid input '${inputArrayItem}'! The input must end with '.js'`)
 
@@ -55,19 +53,35 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
     const pkg = JSON.parse(fs.readFileSync(__dirname + '/../package.json'))
 
     /**
-     *  External modules equal `dependencies` minus `serverDependencies` (= require(package.json) 
+     *  External modules equal `dependencies` minus `serverDependencies` (from package.json)
      */
     const external = Object.keys(pkg.dependencies).filter(dep => !~pkg.serverDependencies.indexOf(dep))
 
     // Source modules config
     const srcConfig = {
-        input: mapSrcInputArrayToObject(pkg.rollupInputs),
+        input: mapSrcInputArrayToObject(pkg.rollup.inputs),
         output: {
             dir: 'dist/public',
             format: 'system',
             sourcemap: true
         },
-        external,
+        external(id, parentId) {
+
+            const inExternal = ~external.indexOf(id)
+
+            // Check module package.json (if it exists)
+            if (inExternal) {
+                const moduleFolder = path.dirname(parentId)
+                try {
+                    const { dependencies } = JSON.parse(fs.readFileSync(moduleFolder + '/package.json'))
+
+                    if (~Object.keys(dependencies).indexOf(id)) return false
+
+                } catch{ }
+            }
+
+            return inExternal
+        },
         plugins: [
             babel({
                 exclude: 'node_modules/**',
@@ -127,7 +141,7 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
         [`node_modules/@babel/polyfill/dist/polyfill${!dev ? '.min' : ''}.js`, "dist/public/vendors/polyfill.js"],
         [`node_modules/systemjs/dist/system${!dev ? '.min' : ''}.js`, 'dist/public/vendors/system.js'],
         [`node_modules/systemjs/dist/extras/named-register${!dev ? '.min' : ''}.js`, 'dist/public/vendors/system.named-register.js']
-    ]
+    ].concat(pkg.rollup.staticFiles)
 
     staticFiles.forEach(([src, dst]) => fs.copyFileSync(cwd + src, cwd + dst))
 
@@ -149,13 +163,22 @@ function mapSrcInputArrayToObject(inputArray, inputObject = {}) {
 
     // Bundle source modules
     if (watch) {
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        })
+
         const srcWatcher = rollup.watch(srcConfig)
 
-        const question = () => rl.question("\x1b[33mEnter 'r' to restart:\x1b[0m ", value => {
+        const question = () => rl.question("\x1b[33mEnter 'r' to restart or 'e' to stop:\x1b[0m ", value => {
             if (value === 'r') {
                 srcWatcher.close()
                 console.log('Full restart build')
                 build()
+            } else if (value === 'e') {
+                srcWatcher.close()
+                rl.close()
             } else {
                 question()
             }

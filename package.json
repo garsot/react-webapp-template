@@ -9,16 +9,20 @@
     "build:server": "node ./scripts/build-server.js",
     "lint": "npx eslint ./src"
   },
-  "rollupInputs": [
-    "index.js",
-    "pages/**/index.js"
-  ],
+  "rollup": {
+    "inputs": [
+      "index.js",
+      "pages/**/index.js"
+    ],
+    "staticFiles": []
+  },
   "serverDependencies": [
     "express",
     "minimist"
   ],
   "dependencies": {
     "express": "^4.16.4",
+    "jquery": "^2.1.0",
     "minimist": "^1.2.0",
     "prop-types": "^15.7.2",
     "react": "^16.8.6",
